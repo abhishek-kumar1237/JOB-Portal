@@ -1,0 +1,335 @@
+/* eslint-disable react/prop-types */
+import React, { useContext, useEffect, useState } from "react";
+import { Context } from "../../main";
+import axios from "axios";
+import toast from "react-hot-toast";
+import { useNavigate } from "react-router-dom";
+import { Check, X } from "lucide-react";
+import ResumeModal from "./ResumeModal";
+import nodata from "../../assets/no-data.png";
+import Loader from "../Loader";
+import ConfirmModal from "../Modal/ConfirmModal.jsx";
+const MyApplications = () => {
+  const { user, isAuthorized } = useContext(Context);
+  const [applications, setApplications] = useState([]);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [resumeImageUrl, setResumeImageUrl] = useState("");
+  const [isLoading, setIsLoading] = useState(true);
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [selectedIdToDelete, setSelectedIdToDelete] = useState(null);
+
+  const navigateTo = useNavigate();
+
+  useEffect(() => {
+    console.log("-------111 isAuthorized", isAuthorized);
+    if (!isAuthorized) {
+      navigateTo("/");
+    }
+  }, [isAuthorized, navigateTo]);
+
+  useEffect(() => {
+    console.log("-------222 fetchApplications", isAuthorized);
+    const fetchApplications = async () => {
+      setIsLoading(true);
+      try {
+        let url = "";
+
+        if (user && user.role === "Employer") {
+          url = `${
+            import.meta.env.VITE_SERVER_URL
+          }/api/v1/application/employer/getall`;
+        } else {
+          url = `${
+            import.meta.env.VITE_SERVER_URL
+          }/api/v1/application/jobseeker/getall`;
+        }
+
+        const res = await axios.get(url, { withCredentials: true });
+        setApplications(res.data.applications);
+      } catch (error) {
+        toast.error(error.response.data.message);
+      }
+      {
+        setIsLoading(false);
+      }
+    };
+    if (isAuthorized && user) {
+      fetchApplications();
+    }
+  }, [isAuthorized, user]);
+
+  const deleteApplication = async (id) => {
+    console.log("inside deleteApplication", id);
+    setIsLoading(true);
+    try {
+      const res = await axios.delete(
+        `${import.meta.env.VITE_SERVER_URL}/api/v1/application/delete/${id}`,
+        {
+          withCredentials: true,
+        }
+      );
+      toast.success(res.data.message);
+      setApplications((prevApplication) =>
+        prevApplication.filter((application) => application._id !== id)
+      );
+    } catch (error) {
+      toast.error(error.response.data.message || "Delete failed");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  if (isLoading) {
+    return <Loader />;
+  }
+
+  const openModal = (imageUrl) => {
+    setResumeImageUrl(imageUrl);
+    setModalOpen(true);
+  };
+
+  const closeModal = () => {
+    setModalOpen(false);
+  };
+
+  return (
+    <>
+      <section className="my_applications page">
+        <div className="container">
+          <h2 className="section-heading">
+            {user?.role === "Job Seeker"
+              ? "My Applications"
+              : "Applications From Job Seekers"}
+          </h2>
+
+          {applications.length === 0 ? (
+            <div className="empty-state">
+              <img src={nodata} alt="No Data" />
+              <p>No applications found</p>
+            </div>
+          ) : (
+            <div className="applications-grid">
+              {applications.map((element, index) =>
+                user?.role === "Job Seeker" ? (
+                  <JobSeekerCard
+                    key={element._id}
+                    element={element}
+                    index={index}
+                    openModal={openModal}
+                    triggerDelete={(id) => {
+                      setSelectedIdToDelete(id);
+                      setShowConfirmModal(true);
+                    }}
+                  />
+                ) : (
+                  <EmployerCard
+                    key={element._id}
+                    element={element}
+                    index={index}
+                    openModal={openModal}
+                  />
+                )
+              )}
+            </div>
+          )}
+        </div>
+
+        {modalOpen && (
+          <ResumeModal imageUrl={resumeImageUrl} onClose={closeModal} />
+        )}
+      </section>
+
+      {showConfirmModal && (
+        <ConfirmModal
+          message="Do you want to delete the application?"
+          onConfirm={() => {
+            deleteApplication(selectedIdToDelete);
+            setShowConfirmModal(false);
+            setSelectedIdToDelete(null);
+          }}
+          onCancel={() => {
+            setShowConfirmModal(false);
+            setSelectedIdToDelete(null);
+          }}
+        />
+      )}
+    </>
+  );
+};
+
+export default MyApplications;
+
+const handleDownload = async (id) => {
+  try {
+    const res = await axios.get(
+      `${import.meta.env.VITE_SERVER_URL}/api/v1/application/download/${id}`,
+      {
+        responseType: "blob", // important!
+        withCredentials: true,
+      }
+    );
+
+    const disposition = res.headers["content-disposition"];
+    let fileName = "resume.pdf"; // default
+    if (disposition && disposition.includes("filename=")) {
+      fileName = disposition.split("filename=")[1].replaceAll('"', "").trim();
+    }
+
+    const blob = new Blob([res.data], { type: res.headers["content-type"] });
+    const url = window.URL.createObjectURL(blob);
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+
+    // Clean up the blob
+    window.URL.revokeObjectURL(url);
+  } catch (err) {
+    console.error(err);
+    toast.error("Download failed");
+  }
+};
+
+const JobSeekerCard = ({
+  element,
+  openModal,
+  triggerDelete,
+  index = 0,
+}) => {
+  const initialStatus = element.currentStatus || "None";
+  return (
+    <>
+      <div className="job_seeker_card" style={{ animationDelay: `${index * 0.07}s` }}>
+        {initialStatus !== "None" && (
+          <div
+            className={`status-chip ${
+              initialStatus === "Shortlisted" ? "shortlisted" : "rejected"
+            }`}
+          >
+            <span>{initialStatus}🎉</span>
+          </div>
+        )}
+        <div className="detail">
+          <p>
+            <span>Name:</span> {element.name}
+          </p>
+          <p>
+            <span>Email:</span> {element.email}
+          </p>
+          <p>
+            <span>Phone:</span> {element.phone}
+          </p>
+          <p>
+            <span>Address:</span> {element.address}
+          </p>
+          <p>
+            <span>CoverLetter:</span> {element.coverLetter}
+          </p>
+        </div>
+        <div className="button_box">
+          <div className="resume">
+            <button onClick={() => handleDownload(element._id)}>
+              Download Resume (PDF)
+            </button>
+          </div>
+
+          <div className="btn_area">
+            <button onClick={() => triggerDelete(element._id)}>
+              Delete Application
+            </button>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+};
+
+const EmployerCard = ({ element, openModal, index = 0 }) => {
+  const initialStatus = element.currentStatus || "None";
+  const [decision, setDecision] = useState(initialStatus);
+
+  const handleApplicationStatus = async (status) => {
+    setDecision(status);
+
+    const url = `${
+      import.meta.env.VITE_SERVER_URL
+    }/api/v1/application/employer/update/${element._id}`;
+    const res = await axios.put(
+      url,
+      {
+        currentStatus: status,
+      },
+      {
+        withCredentials: true,
+      }
+    );
+  };
+
+  return (
+    <>
+      <div className="job_seeker_card" style={{ animationDelay: `${index * 0.07}s` }}>
+        {decision !== "None" && (
+          <div
+            className={`status-chip ${
+              decision === "Shortlisted" ? "shortlisted" : "rejected"
+            }`}
+          >
+            <span>{decision}</span>
+
+            <button
+              className="chip-clear"
+              onClick={() => handleApplicationStatus("None")}
+              title="Clear status"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        )}
+        <div className="action-icons">
+          <button
+            className="icon-btn approve"
+            disabled={decision !== "None"}
+            onClick={() => handleApplicationStatus("Shortlisted")}
+          >
+            <Check size={18} />
+          </button>
+
+          <button
+            className="icon-btn reject"
+            disabled={decision !== "None"}
+            onClick={() => handleApplicationStatus("Rejected")}
+          >
+            <X size={18} />
+          </button>
+        </div>
+        <div className="detail">
+          <p>
+            <span>Name:</span> {element.name}
+          </p>
+          <p>
+            <span>Email:</span> {element.email}
+          </p>
+          <p>
+            <span>Phone:</span> {element.phone}
+          </p>
+          <p>
+            <span>Address:</span> {element.address}
+          </p>
+          <p>
+            <span>CoverLetter:</span> {element.coverLetter}
+          </p>
+        </div>
+        <div className="button_box">
+          <div className="resume">
+            <button onClick={() => handleDownload(element._id)}>
+              Download Resume (PDF)
+            </button>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+};
